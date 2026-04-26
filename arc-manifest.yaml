@@ -14,8 +14,55 @@ author:
 
 repository: "the-metafactory/agent-state"
 
-# Phase 2 will add `provides:` (workflows + scripts) once they exist on disk.
 # Day-one shape per forge/design/agent-platform.md:
 #   - Two SQLite tables: work_items (mutable) + events (append-only)
 #   - Per-instance layout: ~/.config/<host>/agents/<name>/{state.sqlite, dashboard.md, retros/, CLAUDE.md, persona.md}
-#   - Workflows shipped in skill/Workflows/ in Phase 2.
+#   - Workflows shipped in skill/Workflows/.
+#   - Scripts shipped in skill/scripts/, runnable via `bun`.
+
+provides:
+  skill:
+    - trigger: "agent state"
+    - trigger: "work items"
+    - trigger: "errands"
+    - trigger: "events log"
+    - trigger: "agent dashboard"
+    - trigger: "retro"
+    - trigger: "retrospective"
+    - trigger: "replay pending"
+  workflows:
+    - name: ScaffoldFolders
+      file: skill/Workflows/ScaffoldFolders.md
+    - name: EnqueueWorkItem
+      file: skill/Workflows/EnqueueWorkItem.md
+    - name: ClaimWorkItem
+      file: skill/Workflows/ClaimWorkItem.md
+    - name: ResolveWorkItem
+      file: skill/Workflows/ResolveWorkItem.md
+    - name: AppendEvent
+      file: skill/Workflows/AppendEvent.md
+    - name: ReplayPending
+      file: skill/Workflows/ReplayPending.md
+    - name: RegenerateDashboard
+      file: skill/Workflows/RegenerateDashboard.md
+    - name: RetrospectiveSummary
+      file: skill/Workflows/RetrospectiveSummary.md
+  scripts:
+    - name: errands
+      command: bun skill/scripts/errands.ts
+      description: "work_items CLI — list / enqueue / claim / resolve / pending"
+    - name: events
+      command: bun skill/scripts/events.ts
+      description: "events CLI — append / tail / since (append-only timeline)"
+    - name: dashboard
+      command: bun skill/scripts/dashboard.ts
+      description: "Regenerate dashboard.md from state.sqlite (idempotent)"
+    - name: retro
+      command: bun skill/scripts/retro.ts
+      description: "Generate weekly ISO-week retro from events"
+
+capabilities:
+  filesystem:
+    - path: $MF_INSTANCE_DIR
+      access: read-write
+      reason: "Per-instance state.sqlite, dashboard.md, retros/ live here"
