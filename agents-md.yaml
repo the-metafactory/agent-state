@@ -1,0 +1,24 @@
+# agents-md.yaml — repo-specific agent rules configuration
+# Used by `arc upgrade compass` to generate CLAUDE.md from the ecosystem template.
+# See compass/docs/design-claude-md-sync.md for the full design spec.
+
+template: compass-standards
+
+generate:
+  - format: claude-md
+
+# Placeholder values (substituted into templates)
+repo_name: agent-state
+repo_description: "Agent state primitive — work_items, events, dashboard, retros for persona-driven agents."
+deploy_command: "arc publish (post-Phase-2)"
+version_source: arc-manifest.yaml
+release_title_format: '"agent-state vX.Y.Z — Short Description"'
+worktree_pattern: "../agent-state-{slug}"
+sop_path_prefix: "compass/"
+
+# Repo-specific sections injected at marked positions in the template
+sections:
+  - position: "after:description"
+    file: docs/agents-md/architecture.md
+  - position: "after:critical-rules"
+    file: docs/agents-md/critical-rules.md
