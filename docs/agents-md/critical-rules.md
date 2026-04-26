@@ -1,0 +1,4 @@
+- Never delete rows from the `events` table. It is an append-only audit log; if a row is logically replaced, set its `superseded_by` column rather than dropping the row.
+- Schema migrations must be additive within a major version. New tables and new nullable columns are fine; column removals, column-type narrowings, and destructive renames require a major-version bump.
+- The `kind` column on `work_items` is agent-defined. This bundle does not enumerate valid values, validate them, or constrain them — each consuming agent owns its own taxonomy.
+- Per-instance state lives at `~/.config/<host>/agents/<name>/` per the four-folder design in `forge/design/agent-platform.md`. Bundle code never writes outside that path; the host owns location, the bundle owns schema.

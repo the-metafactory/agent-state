@@ -1,0 +1,21 @@
+# arc-manifest.yaml — arc package manifest
+# See: https://github.com/the-metafactory/arc
+
+schema: pai/v1
+type: skill
+namespace: metafactory
+name: AgentState
+version: 0.1.0
+description: "Agent state primitive — work_items, events, dashboard, retros for persona-driven agents."
+
+author:
+  name: Andreas Aastroem
+  github: mellanon
+
+repository: "the-metafactory/agent-state"
+
+# Phase 2 will add `provides:` (workflows + scripts) once they exist on disk.
+# Day-one shape per forge/design/agent-platform.md:
+#   - Two SQLite tables: work_items (mutable) + events (append-only)
+#   - Per-instance layout: ~/.config/<host>/agents/<name>/{state.sqlite, dashboard.md, retros/, CLAUDE.md, persona.md}
+#   - Workflows shipped in skill/Workflows/ in Phase 2.
