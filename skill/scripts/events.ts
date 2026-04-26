@@ -68,7 +68,17 @@ async function main(): Promise<void> {
     }
     case "tail": {
       const limitStr = optionalString(rest, "limit");
-      const limit = limitStr ? Number(limitStr) : 50;
+      let limit = 50;
+      if (limitStr) {
+        const parsed = Number(limitStr);
+        if (!Number.isFinite(parsed) || !Number.isInteger(parsed) || parsed <= 0) {
+          process.stderr.write(
+            `invalid --limit: ${limitStr} (must be a positive integer)\n`,
+          );
+          process.exit(2);
+        }
+        limit = parsed;
+      }
       const rows = tailEvents(db, limit);
       for (const r of rows) printRow(r);
       return;

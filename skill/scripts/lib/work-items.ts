@@ -7,12 +7,24 @@
  *     when the trigger source (e.g. a Discord message) is re-delivered.
  *   - Callers that want upsert-on-payload must explicitly ResolveWorkItem first or use a different id.
  *
- * Status transitions are not enforced beyond the SQL CHECK constraint (the enum). Higher-level
- * workflow files document the intended pending → in_flight → done|failed|cancelled flow.
+ * State-transition guards (enforced here, not just documented):
+ *   - claimWorkItem rejects `done|failed|cancelled` AND `waiting_human`. The workflow MD lists
+ *     calling claim on waiting_human as an anti-pattern; this is the structural enforcement.
+ *   - resolveWorkItem rejects already-terminal rows (`done|failed|cancelled`). Re-resolving fires
+ *     a duplicate work_item_resolved event and double-counts in retros — the workflow MD warns
+ *     against it; this is the structural enforcement.
+ *
+ * Audit trail: every successful state transition emits its own event in this layer
+ * (work_item_created / work_item_claimed / work_item_resolved). Callers — CLI subcommands
+ * and programmatic hosts alike — MUST NOT also call appendEvent for these transitions; that
+ * would double-emit. The events table is the audit ground truth; making emission a property
+ * of the lib (rather than a caller obligation) closes the gap that ReplayPending hosts and
+ * non-CLI callers would otherwise leave open.
  */
 
 import type { Database } from "bun:sqlite";
 import { nowMs } from "./db";
+import { appendEvent, type EventRow } from "./events";
 
 export type WorkItemStatus =
   | "pending"
@@ -48,7 +60,7 @@ export type EnqueueInput = {
   notes?: string | null;
 };
 
-export type EnqueueResult = { inserted: boolean; row: WorkItem };
+export type EnqueueResult = { inserted: boolean; row: WorkItem; event: EventRow | null };
 
 function payloadToString(p: unknown): string {
   if (typeof p === "string") return p;
@@ -60,7 +72,8 @@ export function enqueueWorkItem(db: Database, input: EnqueueInput): EnqueueResul
     .query<WorkItem, [string]>("SELECT * FROM work_items WHERE id = ?")
     .get(input.id);
   if (existing) {
-    return { inserted: false, row: existing };
+    // Idempotent re-enqueue: no row mutation, no event emission.
+    return { inserted: false, row: existing, event: null };
   }
   const ts = nowMs();
   const status: WorkItemStatus = input.status ?? "pending";
@@ -83,14 +96,23 @@ export function enqueueWorkItem(db: Database, input: EnqueueInput): EnqueueResul
   if (!row) {
     throw new Error(`enqueueWorkItem: row vanished post-insert (id=${input.id})`);
   }
-  return { inserted: true, row };
+  const event = appendEvent(db, {
+    type: "work_item_created",
+    actor: row.owner_agent,
+    work_item_id: row.id,
+    payload: { kind: row.kind, status: row.status },
+    ts,
+  });
+  return { inserted: true, row, event };
 }
+
+export type ClaimResult = { row: WorkItem; event: EventRow };
 
 export function claimWorkItem(
   db: Database,
   id: string,
   owner: string,
-): WorkItem {
+): ClaimResult {
   const row = getWorkItem(db, id);
   if (!row) {
     throw new Error(`claimWorkItem: no such work_item id=${id}`);
@@ -98,6 +120,14 @@ export function claimWorkItem(
   if (TERMINAL_STATUSES.includes(row.status)) {
     throw new Error(
       `claimWorkItem: cannot claim terminal work_item id=${id} status=${row.status}`,
+    );
+  }
+  if (row.status === "waiting_human") {
+    // Documented anti-pattern (ClaimWorkItem.md). Re-entering the state machine after a
+    // human intervention is a separate workflow ("AdvanceFromWaitingHuman" in v0.2). Refusing
+    // here keeps the audit trail honest — no silent ownership reassignment via claim.
+    throw new Error(
+      `claimWorkItem: cannot claim waiting_human work_item id=${id} (use a separate advance workflow)`,
     );
   }
   const ts = nowMs();
@@ -112,21 +142,43 @@ export function claimWorkItem(
   if (!updated) {
     throw new Error(`claimWorkItem: row vanished post-update (id=${id})`);
   }
-  return updated;
+  const event = appendEvent(db, {
+    type: "work_item_claimed",
+    actor: owner,
+    work_item_id: id,
+    payload: { status: updated.status },
+    ts,
+  });
+  return { row: updated, event };
 }
 
 export type ResolveStatus = "done" | "failed" | "cancelled";
+
+export type ResolveResult = { row: WorkItem; event: EventRow };
 
 export function resolveWorkItem(
   db: Database,
   id: string,
   status: ResolveStatus,
   notes?: string,
-): WorkItem {
+): ResolveResult {
   const row = getWorkItem(db, id);
   if (!row) {
     throw new Error(`resolveWorkItem: no such work_item id=${id}`);
   }
+  if (TERMINAL_STATUSES.includes(row.status)) {
+    // Documented anti-pattern (ResolveWorkItem.md): re-resolving fires a duplicate
+    // work_item_resolved event and double-counts in retro/dashboard. Symmetric to the
+    // claim guards above. If a cancellation comes in after a `done`, log a separate
+    // event type (`work_item_reopened`) — do not call resolve again.
+    throw new Error(
+      `resolveWorkItem: cannot re-resolve terminal work_item id=${id} status=${row.status}`,
+    );
+  }
+  // --notes "" is treated as "preserve" (same as omitting). The COALESCE-merge in SQL
+  // only treats NULL as preserve; the empty string would otherwise clobber the prior
+  // notes, which is surprising given the workflow doc says "omitting --notes preserves".
+  const notesParam = notes && notes.length > 0 ? notes : null;
   const ts = nowMs();
   db.query(
     `UPDATE work_items
@@ -134,12 +186,19 @@ export function resolveWorkItem(
            updated_at = ?,
            notes = COALESCE(?, notes)
      WHERE id = ?`,
-  ).run(status, ts, notes ?? null, id);
+  ).run(status, ts, notesParam, id);
   const updated = getWorkItem(db, id);
   if (!updated) {
     throw new Error(`resolveWorkItem: row vanished post-update (id=${id})`);
   }
-  return updated;
+  const event = appendEvent(db, {
+    type: "work_item_resolved",
+    actor: updated.owner_agent,
+    work_item_id: id,
+    payload: { status, notes: notesParam },
+    ts,
+  });
+  return { row: updated, event };
 }
 
 export function getWorkItem(db: Database, id: string): WorkItem | null {

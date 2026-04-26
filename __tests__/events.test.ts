@@ -109,12 +109,16 @@ describe("events API", () => {
   });
 
   test("eventsForWorkItem returns chronological events for that work item only", () => {
+    // Note: enqueueWorkItem now emits work_item_created itself (W2). Filter it out for this
+    // test, which is exercising the eventsForWorkItem query semantics in isolation.
     enqueueWorkItem(ctx.db, { id: "w1", kind: "k", payload: {} });
     enqueueWorkItem(ctx.db, { id: "w2", kind: "k", payload: {} });
     appendEvent(ctx.db, { type: "a", work_item_id: "w1", payload: {}, ts: 1 });
     appendEvent(ctx.db, { type: "b", work_item_id: "w2", payload: {}, ts: 2 });
     appendEvent(ctx.db, { type: "c", work_item_id: "w1", payload: {}, ts: 3 });
-    const rows = eventsForWorkItem(ctx.db, "w1");
+    const rows = eventsForWorkItem(ctx.db, "w1").filter(
+      (r) => r.type !== "work_item_created",
+    );
     expect(rows.map((r) => r.type)).toEqual(["a", "c"]);
   });
 

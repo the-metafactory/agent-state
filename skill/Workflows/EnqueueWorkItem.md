@@ -31,11 +31,16 @@ release work it can be the release tag.
 `errand`. Grove-bot uses `discord-message`. Forge will use `release`. Pick a
 short stable string and stick with it.
 
-On success, an event is appended:
+On success, the **lib function itself** appends an event (callers do NOT need
+to — and MUST NOT — call `appendEvent` separately, or the event would be
+double-recorded):
 
 ```json
 {"type":"work_item_created","actor":<owner-or-null>,"work_item_id":<id>,"payload":{"kind":<kind>,"status":"pending"}}
 ```
+
+On a no-op re-enqueue (same id), no event is emitted — `result.event` is
+`null` and the existing row is returned untouched.
 
 ## Verify
 

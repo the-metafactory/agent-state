@@ -1,5 +1,6 @@
 /**
- * work_items API tests — enqueue, claim, resolve, listing, and idempotency.
+ * work_items API tests — enqueue, claim, resolve, listing, idempotency, and the
+ * lib-emitted audit trail (work_item_created / work_item_claimed / work_item_resolved).
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -12,6 +13,7 @@ import {
   listPending,
   pendingForReplay,
 } from "../skill/scripts/lib/work-items";
+import { eventsForWorkItem } from "../skill/scripts/lib/events";
 import { freshDb, rmTmp } from "./helpers";
 
 describe("work_items lifecycle", () => {
@@ -53,9 +55,9 @@ describe("work_items lifecycle", () => {
     enqueueWorkItem(ctx.db, { id: "w1", kind: "k", payload: {} });
     await new Promise((resolve) => setTimeout(resolve, 2));
     const claimed = claimWorkItem(ctx.db, "w1", "luna");
-    expect(claimed.status).toBe("in_flight");
-    expect(claimed.owner_agent).toBe("luna");
-    expect(claimed.updated_at).toBeGreaterThanOrEqual(claimed.created_at);
+    expect(claimed.row.status).toBe("in_flight");
+    expect(claimed.row.owner_agent).toBe("luna");
+    expect(claimed.row.updated_at).toBeGreaterThanOrEqual(claimed.row.created_at);
   });
 
   test("claim throws on unknown id", () => {
@@ -72,18 +74,54 @@ describe("work_items lifecycle", () => {
     );
   });
 
+  test("claim throws on waiting_human work item (W1: symmetric guard)", () => {
+    enqueueWorkItem(ctx.db, {
+      id: "wh",
+      kind: "k",
+      payload: {},
+      status: "waiting_human",
+    });
+    expect(() => claimWorkItem(ctx.db, "wh", "luna")).toThrow(
+      /cannot claim waiting_human/,
+    );
+  });
+
   test("resolve to done is recorded", () => {
     enqueueWorkItem(ctx.db, { id: "w1", kind: "k", payload: {} });
     const r = resolveWorkItem(ctx.db, "w1", "done", "shipped");
-    expect(r.status).toBe("done");
-    expect(r.notes).toBe("shipped");
+    expect(r.row.status).toBe("done");
+    expect(r.row.notes).toBe("shipped");
   });
 
   test("resolve to failed/cancelled also accepted", () => {
     enqueueWorkItem(ctx.db, { id: "wf", kind: "k", payload: {} });
     enqueueWorkItem(ctx.db, { id: "wc", kind: "k", payload: {} });
-    expect(resolveWorkItem(ctx.db, "wf", "failed").status).toBe("failed");
-    expect(resolveWorkItem(ctx.db, "wc", "cancelled").status).toBe("cancelled");
+    expect(resolveWorkItem(ctx.db, "wf", "failed").row.status).toBe("failed");
+    expect(resolveWorkItem(ctx.db, "wc", "cancelled").row.status).toBe("cancelled");
+  });
+
+  test("resolve throws on already-done row (W1: no double-resolve)", () => {
+    enqueueWorkItem(ctx.db, { id: "w1", kind: "k", payload: {} });
+    resolveWorkItem(ctx.db, "w1", "done");
+    expect(() => resolveWorkItem(ctx.db, "w1", "done")).toThrow(
+      /cannot re-resolve terminal/,
+    );
+  });
+
+  test("resolve throws on already-failed row (W1: no double-resolve)", () => {
+    enqueueWorkItem(ctx.db, { id: "w1", kind: "k", payload: {} });
+    resolveWorkItem(ctx.db, "w1", "failed");
+    expect(() => resolveWorkItem(ctx.db, "w1", "cancelled")).toThrow(
+      /cannot re-resolve terminal/,
+    );
+  });
+
+  test("resolve throws on already-cancelled row (W1: no double-resolve)", () => {
+    enqueueWorkItem(ctx.db, { id: "w1", kind: "k", payload: {} });
+    resolveWorkItem(ctx.db, "w1", "cancelled");
+    expect(() => resolveWorkItem(ctx.db, "w1", "done")).toThrow(
+      /cannot re-resolve terminal/,
+    );
   });
 
   test("resolve preserves prior notes when none supplied", () => {
@@ -94,6 +132,19 @@ describe("work_items lifecycle", () => {
       notes: "first note",
     });
     resolveWorkItem(ctx.db, "w1", "done");
+    const row = getWorkItem(ctx.db, "w1");
+    expect(row?.notes).toBe("first note");
+  });
+
+  test("resolve preserves prior notes when --notes \"\" passed (N2)", () => {
+    enqueueWorkItem(ctx.db, {
+      id: "w1",
+      kind: "k",
+      payload: {},
+      notes: "first note",
+    });
+    // Empty string must be treated as "preserve", same as omitting --notes.
+    resolveWorkItem(ctx.db, "w1", "done", "");
     const row = getWorkItem(ctx.db, "w1");
     expect(row?.notes).toBe("first note");
   });
@@ -119,6 +170,81 @@ describe("work_items lifecycle", () => {
     expect(pending.map((r) => r.id)).toEqual(["p"]);
   });
 
+  test("enqueue emits work_item_created event (W2: lib audit trail)", () => {
+    const r = enqueueWorkItem(ctx.db, {
+      id: "w1",
+      kind: "discord-message",
+      payload: { hello: "world" },
+      owner_agent: "luna",
+    });
+    expect(r.event).not.toBeNull();
+    expect(r.event!.type).toBe("work_item_created");
+    expect(r.event!.work_item_id).toBe("w1");
+    expect(r.event!.actor).toBe("luna");
+    expect(JSON.parse(r.event!.payload)).toEqual({
+      kind: "discord-message",
+      status: "pending",
+    });
+    // And the event is queryable by work-item id.
+    const linked = eventsForWorkItem(ctx.db, "w1");
+    expect(linked.map((e) => e.type)).toEqual(["work_item_created"]);
+  });
+
+  test("idempotent re-enqueue does NOT emit a second event (W2)", () => {
+    enqueueWorkItem(ctx.db, { id: "w1", kind: "k", payload: { v: 1 } });
+    const second = enqueueWorkItem(ctx.db, {
+      id: "w1",
+      kind: "k",
+      payload: { v: 2 },
+    });
+    expect(second.inserted).toBe(false);
+    expect(second.event).toBeNull();
+    const linked = eventsForWorkItem(ctx.db, "w1");
+    expect(linked).toHaveLength(1); // only the original work_item_created
+  });
+
+  test("claim emits work_item_claimed event (W2)", () => {
+    enqueueWorkItem(ctx.db, { id: "w1", kind: "k", payload: {} });
+    const c = claimWorkItem(ctx.db, "w1", "luna");
+    expect(c.event.type).toBe("work_item_claimed");
+    expect(c.event.work_item_id).toBe("w1");
+    expect(c.event.actor).toBe("luna");
+    expect(JSON.parse(c.event.payload)).toEqual({ status: "in_flight" });
+  });
+
+  test("resolve emits work_item_resolved event with status payload (W2)", () => {
+    enqueueWorkItem(ctx.db, { id: "w1", kind: "k", payload: {} });
+    claimWorkItem(ctx.db, "w1", "luna");
+    const r = resolveWorkItem(ctx.db, "w1", "done", "shipped");
+    expect(r.event.type).toBe("work_item_resolved");
+    expect(r.event.work_item_id).toBe("w1");
+    expect(r.event.actor).toBe("luna"); // owner_agent on the row at resolve time
+    expect(JSON.parse(r.event.payload)).toEqual({
+      status: "done",
+      notes: "shipped",
+    });
+  });
+
+  test("resolve to failed uses single work_item_resolved type (W2: not work_item_failed)", () => {
+    enqueueWorkItem(ctx.db, { id: "w1", kind: "k", payload: {} });
+    const r = resolveWorkItem(ctx.db, "w1", "failed", "boom");
+    // Single event type for all terminal transitions; status differentiates in payload.
+    expect(r.event.type).toBe("work_item_resolved");
+    expect(JSON.parse(r.event.payload).status).toBe("failed");
+  });
+
+  test("full lifecycle emits exactly 3 events: created, claimed, resolved (W2)", () => {
+    enqueueWorkItem(ctx.db, { id: "w1", kind: "k", payload: {} });
+    claimWorkItem(ctx.db, "w1", "luna");
+    resolveWorkItem(ctx.db, "w1", "done");
+    const linked = eventsForWorkItem(ctx.db, "w1");
+    expect(linked.map((e) => e.type)).toEqual([
+      "work_item_created",
+      "work_item_claimed",
+      "work_item_resolved",
+    ]);
+  });
+
   test("listPending --kind narrows", () => {
     enqueueWorkItem(ctx.db, { id: "p1", kind: "k1", payload: {} });
     enqueueWorkItem(ctx.db, { id: "p2", kind: "k2", payload: {} });
@@ -139,10 +265,10 @@ describe("work_items lifecycle", () => {
     const e = enqueueWorkItem(ctx.db, { id: "w1", kind: "k", payload: {} });
     await new Promise((resolve) => setTimeout(resolve, 2));
     const c = claimWorkItem(ctx.db, "w1", "luna");
-    expect(c.updated_at).toBeGreaterThanOrEqual(e.row.updated_at);
+    expect(c.row.updated_at).toBeGreaterThanOrEqual(e.row.updated_at);
     await new Promise((resolve) => setTimeout(resolve, 2));
     const r = resolveWorkItem(ctx.db, "w1", "done");
-    expect(r.updated_at).toBeGreaterThanOrEqual(c.updated_at);
+    expect(r.row.updated_at).toBeGreaterThanOrEqual(c.row.updated_at);
   });
 });
 

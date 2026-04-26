@@ -38,6 +38,12 @@ visible to the user immediately); a release pipeline might use an hour
 Items in `waiting_human`, `done`, `failed`, or `cancelled` are **never**
 replayed.
 
+When the resume handler picks up a row, it calls `claimWorkItem` from
+`lib/work-items.ts` directly — the lib emits the `work_item_claimed` event
+itself, so the audit trail is complete by construction. Hosts MUST NOT
+also call `appendEvent` for state transitions, or the event would be
+double-recorded. Same for `enqueueWorkItem` and `resolveWorkItem`.
+
 ## Verify
 
 ```bash

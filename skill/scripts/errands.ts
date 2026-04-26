@@ -9,10 +9,11 @@
  *   resolve   --id <ID> --status done|failed|cancelled [--notes <text>]
  *   pending   [--kind <K>]
  *
- * Every mutation also appends a matching event:
- *   enqueue → work_item_created
- *   claim   → work_item_claimed
- *   resolve → work_item_resolved
+ * Event emission lives in `lib/work-items.ts`, NOT here. The lib functions emit
+ * `work_item_created` / `work_item_claimed` / `work_item_resolved` themselves so
+ * programmatic callers (e.g. ReplayPending hosts that import the lib directly) get
+ * the same audit trail by construction. This CLI must not call appendEvent for
+ * state transitions — that would double-emit.
  *
  * State location: $MF_INSTANCE_DIR/state.sqlite, falling back to ./state.sqlite.
  */
@@ -28,7 +29,6 @@ import {
   type WorkItemStatus,
   type ResolveStatus,
 } from "./lib/work-items";
-import { appendEvent } from "./lib/events";
 
 const VALID_RESOLVE: ReadonlyArray<ResolveStatus> = ["done", "failed", "cancelled"];
 const VALID_LIST_STATUS: ReadonlyArray<WorkItemStatus> = [
@@ -74,7 +74,16 @@ async function main(): Promise<void> {
       const owner = optionalString(rest, "owner");
       if (owner) filter.owner_agent = owner;
       const limitStr = optionalString(rest, "limit");
-      if (limitStr) filter.limit = Number(limitStr);
+      if (limitStr) {
+        const parsed = Number(limitStr);
+        if (!Number.isFinite(parsed) || !Number.isInteger(parsed) || parsed <= 0) {
+          process.stderr.write(
+            `invalid --limit: ${limitStr} (must be a positive integer)\n`,
+          );
+          process.exit(2);
+        }
+        filter.limit = parsed;
+      }
       const rows = listWorkItems(db, filter);
       for (const r of rows) printRow(r);
       return;
@@ -93,6 +102,7 @@ async function main(): Promise<void> {
       }
       const owner = optionalString(rest, "owner");
       const notes = optionalString(rest, "notes");
+      // Lib emits the work_item_created event itself — do NOT appendEvent here.
       const result = enqueueWorkItem(db, {
         id,
         kind,
@@ -100,28 +110,18 @@ async function main(): Promise<void> {
         owner_agent: owner ?? null,
         notes: notes ?? null,
       });
-      if (result.inserted) {
-        appendEvent(db, {
-          type: "work_item_created",
-          actor: owner ?? null,
-          work_item_id: id,
-          payload: { kind, status: result.row.status },
-        });
-      }
+      // Output shape preserved (additive only): { inserted, row } — downstream scripts that
+      // jq over .inserted / .row.* still work. The new .event field is available for callers
+      // that want it.
       printRow({ inserted: result.inserted, row: result.row });
       return;
     }
     case "claim": {
       const id = requireString(rest, "id");
       const owner = requireString(rest, "owner");
-      const updated = claimWorkItem(db, id, owner);
-      appendEvent(db, {
-        type: "work_item_claimed",
-        actor: owner,
-        work_item_id: id,
-        payload: { status: updated.status },
-      });
-      printRow(updated);
+      // Lib emits work_item_claimed itself.
+      const result = claimWorkItem(db, id, owner);
+      printRow(result.row);
       return;
     }
     case "resolve": {
@@ -134,14 +134,9 @@ async function main(): Promise<void> {
         process.exit(2);
       }
       const notes = optionalString(rest, "notes");
-      const updated = resolveWorkItem(db, id, status, notes);
-      appendEvent(db, {
-        type: "work_item_resolved",
-        actor: updated.owner_agent,
-        work_item_id: id,
-        payload: { status, notes: notes ?? null },
-      });
-      printRow(updated);
+      // Lib emits work_item_resolved itself, with the {status, notes} payload.
+      const result = resolveWorkItem(db, id, status, notes);
+      printRow(result.row);
       return;
     }
     case "pending": {
