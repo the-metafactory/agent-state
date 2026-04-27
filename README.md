@@ -11,10 +11,40 @@ metafactory agent platform. One bundle, two SQLite tables, a small set of workfl
 - **`state.sqlite`** — per-instance database with two tables:
   - `work_items` — mutable rows, agent-defined `kind` and `status`. The agent's queue.
   - `events` — append-only timeline. Audit trail, retro source, dashboard input.
+- **Scripts** — `scaffold.ts` (programmatic instance setup), `errands.ts` (work_items CLI),
+  `events.ts` (append-only events CLI), `dashboard.ts` (regenerate dashboard.md),
+  `retro.ts` (weekly retro). All runnable via `bun`.
 - **Workflows** — `ScaffoldFolders`, `EnqueueWorkItem`, `ClaimWorkItem`, `ResolveWorkItem`,
   `AppendEvent`, `ReplayPending`, `RegenerateDashboard`, `RetrospectiveSummary`.
-- **Per-instance layout** — `~/.config/<host>/agents/<name>/{state.sqlite, dashboard.md, retros/, CLAUDE.md, persona.md}`
+- **Per-instance layout** — `~/.config/<host>/agents/<name>/{state.sqlite, dashboard.md, retros/, CLAUDE.md, context/, persona.md}`
   per the four-folder shape defined in [`forge/design/agent-platform.md`](https://github.com/the-metafactory/forge/blob/main/design/agent-platform.md).
+
+## Scaffolding an instance
+
+Hosts (e.g. `forge/agent/scaffold-instance.sh`) lay down a fresh instance dir
+with one call:
+
+```bash
+bun ~/.config/metafactory/pkg/repos/agent-state/skill/scripts/scaffold.ts \
+  ~/.config/grove/agents/forge \
+  --host=grove --agent=forge
+```
+
+This creates `state.sqlite` (with all bundled migrations applied via the canonical
+`schema_migrations` runner), `dashboard.md`, `CLAUDE.md`, `context/repos.md`,
+`context/channels.md`, and `retros/`. Idempotent — re-running on an existing
+instance is a no-op for files that already exist; if a new schema migration
+ships in a later bundle version, the next scaffold reports it (e.g.
+`state.sqlite present (applied 0002)`).
+
+**What's preserved across re-runs vs derived:**
+
+- **Operator-editable** (skipped if exists, never overwritten): `CLAUDE.md`, `context/repos.md`, `context/channels.md`, files under `retros/`.
+- **Derived** (the scaffold writes a placeholder once and skips on re-run, but the `RegenerateDashboard` workflow rebuilds it on every state change): `dashboard.md` — do not hand-edit; the regen workflow will overwrite changes.
+
+Pass `--strict` to assert every bundled migration file is present + non-empty
+before opening state.sqlite (catches bundle-relocation breakage early). See
+[`skill/Workflows/ScaffoldFolders.md`](./skill/Workflows/ScaffoldFolders.md) for the full spec.
 
 ## Status
 

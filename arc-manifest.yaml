@@ -5,7 +5,7 @@ schema: pai/v1
 type: skill
 namespace: metafactory
 name: AgentState
-version: 0.1.0
+version: 0.2.0
 description: "Agent state primitive — work_items, events, dashboard, retros for persona-driven agents."
 
 author:
@@ -48,6 +48,9 @@ provides:
     - name: RetrospectiveSummary
       file: skill/Workflows/RetrospectiveSummary.md
   scripts:
+    - name: scaffold
+      command: bun skill/scripts/scaffold.ts
+      description: "Scaffold per-instance state directory (state.sqlite + dashboard.md + context/ + retros/)"
     - name: errands
       command: bun skill/scripts/errands.ts
       description: "work_items CLI — list / enqueue / claim / resolve / pending"
