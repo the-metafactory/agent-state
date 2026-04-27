@@ -3,13 +3,12 @@
  * scaffold.ts — programmatic implementation of Workflows/ScaffoldFolders.md.
  *
  * Lays down the per-instance four-folder layout for a new agent instance and
- * applies migration 0001 to a fresh state.sqlite. Idempotent: re-running on a
+ * applies all bundled migrations to state.sqlite. Idempotent: re-running on a
  * fully-scaffolded directory is a no-op (every action is "skipped (exists)").
  * Operator-edited files are never overwritten.
  *
  * CLI:
- *   bun scaffold.ts <instance-dir> --host=<host> --agent=<agent>
- *                                  [--force-fallback] [--strict]
+ *   bun scaffold.ts <instance-dir> --host=<host> --agent=<agent> [--strict]
  *
  * Hosts (e.g. forge/agent/scaffold-instance.sh) call this once during install:
  *   bun ~/.config/metafactory/pkg/repos/agent-state/skill/scripts/scaffold.ts \
@@ -18,7 +17,10 @@
  * Behavior:
  *   - state.sqlite          → opened via lib/db.ts openState() so migrations
  *                             share the canonical runner (idempotent by
- *                             schema_migrations bookkeeping).
+ *                             schema_migrations bookkeeping). When re-run on
+ *                             an existing state.sqlite, the output line names
+ *                             any newly-applied migrations so operators see
+ *                             schema upgrades, not just "(exists)".
  *   - dashboard.md          → header + "no work yet" placeholder; skipped if
  *                             exists.
  *   - CLAUDE.md             → bridge file pointing host CC sessions at the
@@ -30,10 +32,10 @@
  *   - retros/               → mkdir -p (always safe).
  *
  * Flags:
- *   --strict          fail non-zero if migration 0001 source file is missing,
- *                     instead of letting openState() create an empty database.
- *   --force-fallback  reserved for future use; currently a no-op accepted for
- *                     forward-compat with host scripts.
+ *   --strict   fail non-zero if any bundled migration source file is missing
+ *              or empty, instead of letting openState() / loadMigrations()
+ *              throw a raw readFileSync ENOENT mid-scaffold. Asserts every
+ *              file in the bundle's migration list, not just 0001.
  *
  * Output: one human-readable line per action to stdout, e.g.
  *   scaffold: created state.sqlite
@@ -41,11 +43,11 @@
  *   scaffold: created retros/
  */
 
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { parseArgs, requireString } from "./lib/args";
-import { MIGRATIONS_DIR, openState } from "./lib/db";
+import { getMigrationsDir, listMigrationFiles, openState } from "./lib/db";
 
 type Action = "created" | "skipped";
 
@@ -56,9 +58,26 @@ function log(action: Action, what: string, reason?: string): void {
 
 function usage(): never {
   process.stderr.write(
-    "usage: scaffold.ts <instance-dir> --host=<host> --agent=<agent> [--force-fallback] [--strict]\n",
+    "usage: scaffold.ts <instance-dir> --host=<host> --agent=<agent> [--strict]\n",
   );
   process.exit(2);
+}
+
+/**
+ * `host` and `agent` flow into markdown templates unsanitized. Today's only
+ * caller is a trusted host install script, but defense-in-depth: a backtick-
+ * or pipe-laced value would render as code blocks / table syntax in
+ * dashboard.md and CLAUDE.md. Restrict to the alphanumeric + `_` + `-`
+ * shape every real host/agent name uses.
+ */
+const NAME_PATTERN = /^[A-Za-z0-9_-]+$/;
+
+function validateName(label: string, value: string): void {
+  if (!NAME_PATTERN.test(value)) {
+    throw new Error(
+      `invalid --${label}: ${JSON.stringify(value)} — must match ${NAME_PATTERN.source}`,
+    );
+  }
 }
 
 function dashboardTemplate(host: string, agent: string): string {
@@ -143,7 +162,6 @@ export type ScaffoldOptions = {
   host: string;
   agent: string;
   strict?: boolean;
-  forceFallback?: boolean;
 };
 
 /**
@@ -152,6 +170,8 @@ export type ScaffoldOptions = {
  */
 export function scaffold(opts: ScaffoldOptions): ScaffoldResult {
   const { instanceDir, host, agent } = opts;
+  validateName("host", host);
+  validateName("agent", agent);
   const result: ScaffoldResult = { instanceDir, actions: [] };
 
   const record = (kind: Action, what: string, reason?: string): void => {
@@ -165,32 +185,65 @@ export function scaffold(opts: ScaffoldOptions): ScaffoldResult {
     mkdirSync(instanceDir, { recursive: true });
   }
 
-  // 2. --strict: verify migration 0001 source exists before openState() would
-  //    silently fall back to an empty schema. openState() actually throws when
-  //    a migration file is missing because loadMigrations() reads the file
-  //    eagerly — but in --strict mode we want a clean, scaffold-flavored error
-  //    rather than a stack trace from readFileSync.
+  // 2. --strict: verify EVERY bundled migration source exists and is non-empty
+  //    before openState() would otherwise throw a raw readFileSync ENOENT mid-
+  //    scaffold. Iterates the same MIGRATION_FILES list loadMigrations() reads,
+  //    so when 0002 lands the strict precheck automatically extends — no
+  //    hardcoded path to forget to update.
   //
-  //    Tests can point at a fake migrations dir via MF_MIGRATIONS_DIR_OVERRIDE
-  //    without disturbing the real bundle layout (which other parallel tests
-  //    depend on).
-  const migrationsDir = process.env.MF_MIGRATIONS_DIR_OVERRIDE ?? MIGRATIONS_DIR;
-  const migration0001 = join(migrationsDir, "0001-initial.sql");
-  if (opts.strict && !existsSync(migration0001)) {
-    process.stderr.write(
-      `scaffold: --strict mode: migration 0001 not found at ${migration0001}\n`,
-    );
-    process.exit(3);
+  //    Both this precheck and loadMigrations() now read from getMigrationsDir(),
+  //    which honors MF_MIGRATIONS_DIR_OVERRIDE — so the env hook exercises the
+  //    real production failure mode, not a synthetic shadow path.
+  if (opts.strict) {
+    const migrationsDir = getMigrationsDir();
+    for (const { version, filename } of listMigrationFiles()) {
+      const path = join(migrationsDir, filename);
+      if (!existsSync(path)) {
+        process.stderr.write(
+          `scaffold: --strict mode: migration ${version} not found at ${path}\n`,
+        );
+        process.exit(3);
+      }
+      // Empty migration file is almost always operator error (truncated copy,
+      // bad rebase). loadMigrations() would happily load "" and apply nothing.
+      let size = 0;
+      try {
+        size = statSync(path).size;
+      } catch (_err) {
+        // statSync after existsSync should not race in practice; treat as missing.
+        process.stderr.write(
+          `scaffold: --strict mode: migration ${version} not readable at ${path}\n`,
+        );
+        process.exit(3);
+      }
+      if (size === 0) {
+        process.stderr.write(
+          `scaffold: --strict mode: migration ${version} is empty at ${path}\n`,
+        );
+        process.exit(3);
+      }
+    }
   }
 
   // 3. state.sqlite — created (or migrated) via openState(). Note we set
   //    explicit path so MF_INSTANCE_DIR env is not required for this call.
+  //    We branch on (existed-before, applied-now) so a re-run that picks up a
+  //    NEW migration (e.g. 0002) reports the schema upgrade rather than
+  //    silently printing "(exists)".
   const statePath = join(instanceDir, "state.sqlite");
   const stateExisted = existsSync(statePath);
-  const { db } = openState({ path: statePath });
+  const { db, applied } = openState({ path: statePath });
   db.close();
   if (stateExisted) {
-    record("skipped", "state.sqlite", "exists");
+    if (applied.length > 0) {
+      record(
+        "skipped",
+        "state.sqlite",
+        `present, applied ${applied.length} new migration${applied.length === 1 ? "" : "s"}: ${applied.join(", ")}`,
+      );
+    } else {
+      record("skipped", "state.sqlite", "exists");
+    }
   } else {
     record("created", "state.sqlite");
   }
@@ -253,17 +306,18 @@ export function scaffold(opts: ScaffoldOptions): ScaffoldResult {
 async function main(): Promise<void> {
   const argv = Bun.argv.slice(2);
   if (argv.length === 0) usage();
-  const parsed = parseArgs(argv);
+  // Declare --strict boolean so it never greedily consumes the next argv token
+  // (e.g. `--strict --host=grove` used to risk capturing `--host=grove` as the
+  // strict value depending on token order).
+  const parsed = parseArgs(argv, { booleanFlags: ["strict"] });
   const instanceDir = parsed.positional[0];
   if (!instanceDir) usage();
 
   const host = requireString(parsed, "host");
   const agent = requireString(parsed, "agent");
-  const strict = parsed.flags["strict"] === true || parsed.flags["strict"] === "true";
-  const forceFallback =
-    parsed.flags["force-fallback"] === true || parsed.flags["force-fallback"] === "true";
+  const strict = parsed.flags["strict"] === true;
 
-  scaffold({ instanceDir, host, agent, strict, forceFallback });
+  scaffold({ instanceDir, host, agent, strict });
 }
 
 if (import.meta.main) {

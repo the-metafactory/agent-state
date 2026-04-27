@@ -30,12 +30,21 @@ bun ~/.config/metafactory/pkg/repos/agent-state/skill/scripts/scaffold.ts \
   --host=grove --agent=forge
 ```
 
-This creates `state.sqlite` (with migration 0001 applied), `dashboard.md`,
-`CLAUDE.md`, `context/repos.md`, `context/channels.md`, and `retros/`.
-Idempotent — operator-edited files are preserved on re-run. Pass `--strict` to
-fail loudly if the migration source is missing instead of falling back to an
-empty schema. See [`skill/Workflows/ScaffoldFolders.md`](./skill/Workflows/ScaffoldFolders.md)
-for the full spec.
+This creates `state.sqlite` (with all bundled migrations applied via the canonical
+`schema_migrations` runner), `dashboard.md`, `CLAUDE.md`, `context/repos.md`,
+`context/channels.md`, and `retros/`. Idempotent — re-running on an existing
+instance is a no-op for files that already exist; if a new schema migration
+ships in a later bundle version, the next scaffold reports it (e.g.
+`state.sqlite present (applied 0002)`).
+
+**What's preserved across re-runs vs derived:**
+
+- **Operator-editable** (skipped if exists, never overwritten): `CLAUDE.md`, `context/repos.md`, `context/channels.md`, files under `retros/`.
+- **Derived** (the scaffold writes a placeholder once and skips on re-run, but the `RegenerateDashboard` workflow rebuilds it on every state change): `dashboard.md` — do not hand-edit; the regen workflow will overwrite changes.
+
+Pass `--strict` to assert every bundled migration file is present + non-empty
+before opening state.sqlite (catches bundle-relocation breakage early). See
+[`skill/Workflows/ScaffoldFolders.md`](./skill/Workflows/ScaffoldFolders.md) for the full spec.
 
 ## Status
 

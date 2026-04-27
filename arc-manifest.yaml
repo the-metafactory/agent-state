@@ -5,7 +5,7 @@ schema: pai/v1
 type: skill
 namespace: metafactory
 name: AgentState
-version: 0.1.0
+version: 0.2.0
 description: "Agent state primitive — work_items, events, dashboard, retros for persona-driven agents."
 
 author:

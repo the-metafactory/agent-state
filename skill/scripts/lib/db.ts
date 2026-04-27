@@ -24,9 +24,31 @@ export type Migration = {
   sql: string;
 };
 
-const MIGRATION_FILES: ReadonlyArray<{ version: string; filename: string }> = [
+export type MigrationFile = { version: string; filename: string };
+
+const MIGRATION_FILES: ReadonlyArray<MigrationFile> = [
   { version: "0001", filename: "0001-initial.sql" },
 ];
+
+/**
+ * Resolve the migrations directory used by every loader call. Honors the
+ * `MF_MIGRATIONS_DIR_OVERRIDE` env var so the strict precheck and the actual
+ * loader stay in lockstep — the env hook is no longer a synthetic test seam.
+ */
+export function getMigrationsDir(): string {
+  const override = process.env.MF_MIGRATIONS_DIR_OVERRIDE;
+  if (override && override.length > 0) return override;
+  return MIGRATIONS_DIR;
+}
+
+/**
+ * Public list of every migration this bundle ships. Callers (e.g. scaffold's
+ * --strict precheck) iterate this so adding a new migration file automatically
+ * extends the strict assertion — no separate hardcoded path to maintain.
+ */
+export function listMigrationFiles(): ReadonlyArray<MigrationFile> {
+  return MIGRATION_FILES;
+}
 
 export function resolveStatePath(explicit?: string): string {
   if (explicit && explicit.length > 0) return explicit;
@@ -38,10 +60,11 @@ export function resolveStatePath(explicit?: string): string {
 }
 
 export function loadMigrations(): Migration[] {
+  const dir = getMigrationsDir();
   return MIGRATION_FILES.map(({ version, filename }) => ({
     version,
     filename,
-    sql: readFileSync(join(MIGRATIONS_DIR, filename), "utf8"),
+    sql: readFileSync(join(dir, filename), "utf8"),
   }));
 }
 
@@ -84,7 +107,11 @@ export type OpenOptions = {
   ensureDir?: boolean;
 };
 
-export function openState(opts: OpenOptions = {}): { db: Database; path: string } {
+export function openState(opts: OpenOptions = {}): {
+  db: Database;
+  path: string;
+  applied: string[];
+} {
   const path = resolveStatePath(opts.path);
   const ensureDir = opts.ensureDir ?? true;
   if (ensureDir) {
@@ -96,8 +123,8 @@ export function openState(opts: OpenOptions = {}): { db: Database; path: string 
   const db = new Database(path);
   db.exec("PRAGMA foreign_keys = ON;");
   db.exec("PRAGMA journal_mode = WAL;");
-  applyMigrations(db);
-  return { db, path };
+  const applied = applyMigrations(db);
+  return { db, path, applied };
 }
 
 export function nowMs(): number {
