@@ -42,9 +42,10 @@ stdout becomes `scaffold: skipped <X> (exists)`).
 
 Flags:
 
-- `--strict` — fail with non-zero if migration `0001-initial.sql` cannot be
-  located, instead of letting the database open with an empty schema.
-- `--force-fallback` — reserved for future use; currently a no-op.
+- `--strict` — fail with non-zero if any bundled migration source file (every
+  entry returned by `listMigrationFiles()`, not just `0001-initial.sql`) is
+  missing or empty, instead of letting `loadMigrations()` throw a raw
+  `readFileSync` ENOENT mid-scaffold. Catches bundle-relocation breakage early.
 
 ### Lazy fallback
 
