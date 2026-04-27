@@ -48,6 +48,9 @@ provides:
     - name: RetrospectiveSummary
       file: skill/Workflows/RetrospectiveSummary.md
   scripts:
+    - name: scaffold
+      command: bun skill/scripts/scaffold.ts
+      description: "Scaffold per-instance state directory (state.sqlite + dashboard.md + context/ + retros/)"
     - name: errands
       command: bun skill/scripts/errands.ts
       description: "work_items CLI — list / enqueue / claim / resolve / pending"
