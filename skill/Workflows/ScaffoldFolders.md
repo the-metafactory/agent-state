@@ -13,34 +13,53 @@ host has not pre-set it.
 
 ## Action
 
-```bash
-# Host-driven: $MF_INSTANCE_DIR is already set.
-MF_INSTANCE_DIR=~/.config/grove/agents/forge \
-  bun <bundleInstallPath>/skill/scripts/errands.ts list
-```
-
-The first `errands.ts` (or any state-touching script) call:
-
-1. Resolves `state.sqlite` path from `$MF_INSTANCE_DIR`.
-2. Ensures the parent directory exists (mkdir -p).
-3. Opens the database (creating it if missing).
-4. Runs all pending migrations from `migrations/` (currently `0001-initial.sql`).
-5. Records the applied versions in `schema_migrations`.
-
-There is no separate "scaffold" subcommand; the migration is performed lazily
-on first DB open. To create the sibling folders explicitly, the host can:
+The canonical execution path is `skill/scripts/scaffold.ts`. This document is
+the human-readable spec; the script is the programmatic implementation hosts
+invoke.
 
 ```bash
-mkdir -p $MF_INSTANCE_DIR/retros
-touch $MF_INSTANCE_DIR/dashboard.md
-# CLAUDE.md and persona.md are written by the host's install flow, not this bundle.
+# Host-driven: pass instance dir + identity flags.
+bun <bundleInstallPath>/skill/scripts/scaffold.ts \
+  ~/.config/grove/agents/forge \
+  --host=grove --agent=forge
 ```
+
+The script creates (idempotently — operator-edited files are preserved):
+
+1. `state.sqlite` — opened via `lib/db.ts openState()`, which applies all
+   pending migrations from `migrations/` (currently `0001-initial.sql`) and
+   records applied versions in `schema_migrations`.
+2. `dashboard.md` — header + "no work yet" placeholder. Skipped if it already
+   exists (operator/RegenerateDashboard owns it after first run).
+3. `CLAUDE.md` — bridge file pointing host CC sessions at the right context
+   (host + agent baked into the body). Skipped if exists.
+4. `context/repos.md` — repositories-in-scope placeholder.
+5. `context/channels.md` — Discord channels-in-scope placeholder.
+6. `retros/` — directory for weekly ISO-week retro markdown files.
+
+Re-running on a fully-scaffolded instance is a clean no-op (every line in
+stdout becomes `scaffold: skipped <X> (exists)`).
+
+Flags:
+
+- `--strict` — fail with non-zero if any bundled migration source file (every
+  entry returned by `listMigrationFiles()`, not just `0001-initial.sql`) is
+  missing or empty, instead of letting `loadMigrations()` throw a raw
+  `readFileSync` ENOENT mid-scaffold. Catches bundle-relocation breakage early.
+
+### Lazy fallback
+
+For backward compatibility, the migration is *also* applied lazily on first DB
+open by any state-touching script (`errands.ts`, `events.ts`, etc.) — so a host
+that forgets to run `scaffold.ts` will still get a working `state.sqlite`. The
+explicit `scaffold.ts` call is preferred because it also creates the sibling
+folders and bridge files in one step.
 
 ## Verify
 
 ```bash
 ls -la $MF_INSTANCE_DIR
-# Expect: state.sqlite, dashboard.md, retros/
+# Expect: state.sqlite, dashboard.md, CLAUDE.md, context/, retros/
 
 sqlite3 $MF_INSTANCE_DIR/state.sqlite '.schema work_items'
 sqlite3 $MF_INSTANCE_DIR/state.sqlite "SELECT version FROM schema_migrations;"
