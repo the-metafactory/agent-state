@@ -2,8 +2,8 @@
 
 Agent state primitive — `work_items`, `events`, dashboard, retros for persona-driven agents.
 
-The runtime artifact that satisfies the `instanceStateSpec` field of an agent manifest in the
-metafactory agent platform. One bundle, two SQLite tables, a small set of workflows that hosts
+The runtime artifact that satisfies the `state` field (formerly `instanceStateSpec`) of an
+agent manifest in the metafactory agent platform. One bundle, two SQLite tables, a small set of workflows that hosts
 (Grove, pilot, ...) call at well-defined lifecycle moments.
 
 ## What ships here
@@ -48,8 +48,8 @@ before opening state.sqlite (catches bundle-relocation breakage early). See
 
 ## Status
 
-Phase 1 of the metafactory agent platform iteration plan. This commit scaffolds the repo;
-Phase 2 (workflows, scripts, migrations, tests) is tracked in this repo's issue tracker and
+Phase 2 of the metafactory agent platform iteration plan is shipped: schema, workflows,
+scripts, and tests are implemented (as-001 MVP, as-002 scaffold), tracked in
 [meta-factory#388](https://github.com/the-metafactory/meta-factory/issues/388) /
 [meta-factory#390](https://github.com/the-metafactory/meta-factory/issues/390).
 
@@ -58,7 +58,7 @@ Phase 2 (workflows, scripts, migrations, tests) is tracked in this repo's issue 
 Once published:
 
 ```bash
-arc install AgentState
+arc install agent-state
 ```
 
 Hosts call the bundle's workflows via subprocess invocation per the hook contract in the
