@@ -10,26 +10,27 @@ version: 0.1.0
 
 # AgentState
 
-> **Status: Phase-1 placeholder.** This SKILL.md scaffolds the bundle entry point; the
-> workflows, scripts, and migrations land in Phase 2 (tracked in this repo's issue tracker
-> and [meta-factory#388](https://github.com/the-metafactory/meta-factory/issues/388)).
+> **Status: Phase 2 shipped.** Workflows, scripts, migrations, and tests are implemented
+> (as-001 MVP, as-002 scaffold; tracked via
+> [meta-factory#388](https://github.com/the-metafactory/meta-factory/issues/388)).
 
-The runtime artifact that satisfies the `instanceStateSpec` field of an agent manifest, per
+The runtime artifact that satisfies the `state` field (formerly `instanceStateSpec`) of an
+agent manifest, per
 [`forge/design/agent-platform.md`](https://github.com/the-metafactory/forge/blob/main/design/agent-platform.md).
 
 ## What this bundle owns
 
 - The `state.sqlite` schema: `work_items` (mutable) + `events` (append-only).
-- The per-instance layout: `~/.config/<host>/agents/<name>/{state.sqlite, dashboard.md, retros/, CLAUDE.md, persona.md}`.
-- Eight workflows (Phase 2) hosts call via subprocess invocation per the manifest hook contract.
+- The per-instance layout: `~/.config/<host>/agents/<name>/{state.sqlite, dashboard.md, retros/, context/, CLAUDE.md, persona.md}`.
+- Eight workflows hosts call via subprocess invocation per the manifest hook contract.
 
-## Workflows (Phase 2)
+## Workflows
 
-Each workflow lands as `Workflows/<Name>.md` with a runnable script in `scripts/`:
+Each workflow ships as `Workflows/<Name>.md` with a runnable script in `scripts/`:
 
-- `ScaffoldFolders` — first-run setup; creates the four-folder layout and runs `migrations/0001_initial.sql`.
+- `ScaffoldFolders` — first-run setup; creates the per-instance layout and runs `migrations/0001-initial.sql`.
 - `EnqueueWorkItem` — insert pending row into `work_items`.
-- `ClaimWorkItem` — atomic `pending → claimed` transition.
+- `ClaimWorkItem` — atomic `pending → in_flight` transition (emits `work_item_claimed`).
 - `ResolveWorkItem` — terminal transition (`done` or `failed`), append matching event.
 - `AppendEvent` — append-only insert into `events`.
 - `ReplayPending` — `onStart` hook; walks unfinished work items and re-emits.
