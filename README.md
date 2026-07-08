@@ -58,7 +58,7 @@ scripts, and tests are implemented (as-001 MVP, as-002 scaffold), tracked in
 Once published:
 
 ```bash
-arc install AgentState
+arc install agent-state
 ```
 
 Hosts call the bundle's workflows via subprocess invocation per the hook contract in the

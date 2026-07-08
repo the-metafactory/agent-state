@@ -18,7 +18,7 @@ well-defined lifecycle moments via subprocess invocation.
 
 ```
 agent-state/
-├── arc-manifest.yaml         — schema: pai/v1, type: skill, name: AgentState
+├── arc-manifest.yaml         — schema: pai/v1, type: skill, name: agent-state
 ├── skill/
 │   ├── SKILL.md              — trigger phrases + workflow routing
 │   ├── Workflows/            — one file per named lifecycle workflow
