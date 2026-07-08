@@ -70,6 +70,16 @@ agent platform design.
 - [meta-factory#388](https://github.com/the-metafactory/meta-factory/issues/388) — AgentState bundle implementation
 - [meta-factory#390](https://github.com/the-metafactory/meta-factory/issues/390) — platform iteration plan
 
+## Attribution
+
+The carry-your-own-state model this bundle implements — each agent with a home of its
+own, a work queue, an append-only diary, and a habit of weekly retrospectives, rather
+than a super-brain in the middle — is inspired by **Henrik Kniberg**'s YouTube talks on
+AI agents, in particular ["AI Agents in Practice" (GOTO Copenhagen 2025)](https://www.youtube.com/watch?v=R7Dv2h3tYCU):
+*"agents need a place to live & work (like we humans)."* See
+[`research/2026-07-08-agent-memory-ecosystem-fit.md`](./research/2026-07-08-agent-memory-ecosystem-fit.md)
+for the full evidence base and sources.
+
 ## License
 
 MIT — see [LICENSE](./LICENSE).
