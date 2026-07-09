@@ -1,6 +1,6 @@
 # Design: the learning loop — retros → gated persona amendments
 
-**Status:** PROPOSAL — needs principal sign-off on the open questions before implementation
+**Status:** ACCEPTED — open questions resolved by the principal 2026-07-09; ready for implementation slicing
 **Date:** 2026-07-09
 **Grounded in:** [`research/2026-07-08-agent-memory-ecosystem-fit.md`](../research/2026-07-08-agent-memory-ecosystem-fit.md) §4 (the gap), Kniberg/Abundly production lessons (§3)
 
@@ -71,13 +71,16 @@ No new tables, no migrations. The lifecycle reuses the schema exactly as shipped
   person," and reusing work_items keeps the audit trail, replay exclusion (parked items are
   never auto-claimed), and dashboard integration for free.
 
-## Open questions (principal decision needed)
+## Decisions (resolved by the principal, 2026-07-09)
 
-1. **Overlay target:** host persona overlay (`persona.md.local`) vs instance `context/`
-   files vs a PR against the pack repo — where should approved amendments live? (Proposal
-   assumes the overlay; packs stay pristine.)
-2. **Proposal cadence:** coupled to the weekly retro, or event-count triggered?
-3. **Scope of amendable surface:** persona voice only, or also `context/repos.md` /
-   `context/channels.md` scope files? (The latter is lower-risk and arguably more useful.)
-4. **Does the reference implementation belong in example-agent** (tutorial value) **or in a
-   real agent first** (proof under load)?
+1. **Overlay target: the principal-owned overlay.** Approved amendments are applied by the
+   host to the persona/identity overlay (e.g. `personas/<agent>.md.local`), never to the
+   installed pack — packs stay pristine, `arc upgrade` never clobbers.
+2. **Cadence: coupled to the weekly retro.** `ProposeAmendment` runs after
+   `RetrospectiveSummary`; no event-count trigger in v1.
+3. **Amendable surface, v1: context/scope files first.** Proposals may target
+   `context/repos.md`, `context/channels.md`, and working notes — low-risk, immediately
+   useful. Persona voice becomes amendable in v2, once the loop has earned trust via its
+   own acceptance-rate ladder.
+4. **Reference implementation: example-agent.** The tutorial pack demonstrates the full
+   propose → `waiting_human` → approve/apply cycle.
