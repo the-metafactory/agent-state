@@ -1,0 +1,71 @@
+# Signed registry publish — agent-state#9.
+#
+# INERT BY DEFAULT: without the ARC_REGISTRY_TOKEN repo secret this workflow
+# logs a notice and exits green without publishing anything. Adding the secret
+# is the single deliberate act that takes it live — a principal decision, not
+# a side effect of releasing.
+#
+# When live: publishes the released version to the metafactory registry with
+# Sigstore signing via GitHub Actions OIDC (arc's phase-1 trust model accepts
+# only Actions OIDC identity — local cosign auth is disabled by design; see
+# arc src/lib/cosign.ts). No --allow-unsigned-official here, ever.
+name: publish
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  id-token: write # Sigstore keyless signing via the runner's OIDC token
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Gate on registry credential (inert without it)
+        id: gate
+        env:
+          ARC_REGISTRY_TOKEN: ${{ secrets.ARC_REGISTRY_TOKEN }}
+        run: |
+          if [ -z "${ARC_REGISTRY_TOKEN}" ]; then
+            echo "::notice::publish is intentionally inert — ARC_REGISTRY_TOKEN secret not set. Add the repo secret to go live (agent-state#9)."
+            echo "live=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "live=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout release tag
+        if: steps.gate.outputs.live == 'true'
+        uses: actions/checkout@v4
+
+      - name: Setup bun
+        if: steps.gate.outputs.live == 'true'
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install arc (from source, pinned to default branch)
+        if: steps.gate.outputs.live == 'true'
+        run: |
+          git clone --depth 1 https://github.com/the-metafactory/arc "$RUNNER_TEMP/arc"
+          cd "$RUNNER_TEMP/arc" && bun install --frozen-lockfile
+
+      - name: Configure registry source
+        if: steps.gate.outputs.live == 'true'
+        env:
+          ARC_REGISTRY_TOKEN: ${{ secrets.ARC_REGISTRY_TOKEN }}
+        run: |
+          mkdir -p ~/.config/metafactory
+          umask 077
+          cat > ~/.config/metafactory/sources.yaml <<EOF
+          sources:
+            - name: metafactory
+              url: https://meta-factory.ai
+              tier: official
+              enabled: true
+              type: metafactory
+              token: ${ARC_REGISTRY_TOKEN}
+          EOF
+
+      - name: Publish (Sigstore-signed via OIDC)
+        if: steps.gate.outputs.live == 'true'
+        run: bun "$RUNNER_TEMP/arc/src/cli.ts" publish
