@@ -15,7 +15,8 @@ agent manifest in the metafactory agent platform. One bundle, two SQLite tables,
   `events.ts` (append-only events CLI), `dashboard.ts` (regenerate dashboard.md),
   `retro.ts` (weekly retro). All runnable via `bun`.
 - **Workflows** — `ScaffoldFolders`, `EnqueueWorkItem`, `ClaimWorkItem`, `ResolveWorkItem`,
-  `AppendEvent`, `ReplayPending`, `RegenerateDashboard`, `RetrospectiveSummary`.
+  `GetWorkItem`, `AnnotateWorkItem`, `AppendEvent`, `ReplayPending`, `RegenerateDashboard`,
+  `RetrospectiveSummary`.
 - **Per-instance layout** — `~/.config/<host>/agents/<name>/{state.sqlite, dashboard.md, retros/, CLAUDE.md, context/, persona.md}`
   per the four-folder shape defined in [`forge/design/agent-platform.md`](https://github.com/the-metafactory/forge/blob/main/design/agent-platform.md).
 

@@ -87,6 +87,146 @@ describe("events.ts CLI flag validation (N1)", () => {
   });
 });
 
+describe("errands.ts get (#12)", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "as-cli-"));
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("get on an existing id prints the row as JSON (exit 0)", async () => {
+    await run(
+      ERRANDS,
+      ["enqueue", "--id", "w1", "--kind", "test", "--payload", '{"a":1}'],
+      dir,
+    );
+    const r = await run(ERRANDS, ["get", "--id", "w1"], dir);
+    expect(r.exitCode).toBe(0);
+    const row = JSON.parse(r.stdout.trim()) as { id: string; kind: string };
+    expect(row.id).toBe("w1");
+    expect(row.kind).toBe("test");
+  });
+
+  test("get on a missing id exits 1 with a clear message", async () => {
+    const r = await run(ERRANDS, ["get", "--id", "nope"], dir);
+    expect(r.exitCode).toBe(1);
+    expect(r.stderr).toContain("no such work_item");
+    expect(r.stderr).toContain("nope");
+  });
+});
+
+describe("errands.ts annotate (#12)", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "as-cli-"));
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  async function enqueue(id: string, extra: string[] = []): Promise<void> {
+    await run(
+      ERRANDS,
+      ["enqueue", "--id", id, "--kind", "dev-session", "--payload", "{}", ...extra],
+      dir,
+    );
+  }
+
+  test("annotate merges a JSON object into notes and prints the updated row", async () => {
+    await enqueue("w1");
+    const r = await run(
+      ERRANDS,
+      ["annotate", "--id", "w1", "--notes-json", '{"session_id":"ccs-1"}'],
+      dir,
+    );
+    expect(r.exitCode).toBe(0);
+    const row = JSON.parse(r.stdout.trim()) as { notes: string; status: string };
+    expect(JSON.parse(row.notes)).toEqual({ session_id: "ccs-1" });
+    expect(row.status).toBe("pending");
+  });
+
+  test("annotate emits exactly one work_item_annotated event", async () => {
+    await enqueue("w1");
+    await run(
+      ERRANDS,
+      ["annotate", "--id", "w1", "--notes-json", '{"session_id":"ccs-2"}'],
+      dir,
+    );
+    const tail = await run(EVENTS, ["tail", "--limit", "50"], dir);
+    const types = tail.stdout
+      .trim()
+      .split("\n")
+      .filter((l) => l.length > 0)
+      .map((l) => JSON.parse(l) as { type: string; work_item_id: string | null })
+      .filter((e) => e.work_item_id === "w1")
+      .map((e) => e.type)
+      .sort();
+    expect(types).toEqual(["work_item_annotated", "work_item_created"]);
+  });
+
+  test("annotate preserves non-JSON notes under a text key", async () => {
+    await enqueue("w1", ["--notes", "shipped by hand"]);
+    const r = await run(
+      ERRANDS,
+      ["annotate", "--id", "w1", "--notes-json", '{"session_id":"ccs-3"}'],
+      dir,
+    );
+    const row = JSON.parse(r.stdout.trim()) as { notes: string };
+    expect(JSON.parse(row.notes)).toEqual({
+      text: "shipped by hand",
+      session_id: "ccs-3",
+    });
+  });
+
+  test("annotate on a terminal (done) row is allowed and status unchanged", async () => {
+    await enqueue("w1");
+    await run(ERRANDS, ["resolve", "--id", "w1", "--status", "done"], dir);
+    const r = await run(
+      ERRANDS,
+      ["annotate", "--id", "w1", "--notes-json", '{"session_id":"ccs-4"}'],
+      dir,
+    );
+    expect(r.exitCode).toBe(0);
+    const row = JSON.parse(r.stdout.trim()) as { status: string; notes: string };
+    expect(row.status).toBe("done");
+    expect(JSON.parse(row.notes).session_id).toBe("ccs-4");
+  });
+
+  test("annotate with a JSON array exits 2 (must be an object)", async () => {
+    await enqueue("w1");
+    const r = await run(
+      ERRANDS,
+      ["annotate", "--id", "w1", "--notes-json", "[1,2,3]"],
+      dir,
+    );
+    expect(r.exitCode).toBe(2);
+    expect(r.stderr).toContain("must be a JSON object");
+  });
+
+  test("annotate with malformed JSON exits 2", async () => {
+    await enqueue("w1");
+    const r = await run(
+      ERRANDS,
+      ["annotate", "--id", "w1", "--notes-json", "{not json"],
+      dir,
+    );
+    expect(r.exitCode).toBe(2);
+    expect(r.stderr).toContain("invalid --notes-json");
+  });
+
+  test("annotate on a missing id exits 1", async () => {
+    const r = await run(
+      ERRANDS,
+      ["annotate", "--id", "nope", "--notes-json", '{"a":1}'],
+      dir,
+    );
+    expect(r.exitCode).toBe(1);
+    expect(r.stderr).toContain("no such work_item");
+  });
+});
+
 describe("errands.ts CLI does not double-emit events (W2)", () => {
   let dir: string;
   beforeEach(() => {
