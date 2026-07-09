@@ -39,6 +39,10 @@ provides:
       file: skill/Workflows/ClaimWorkItem.md
     - name: ResolveWorkItem
       file: skill/Workflows/ResolveWorkItem.md
+    - name: GetWorkItem
+      file: skill/Workflows/GetWorkItem.md
+    - name: AnnotateWorkItem
+      file: skill/Workflows/AnnotateWorkItem.md
     - name: AppendEvent
       file: skill/Workflows/AppendEvent.md
     - name: ReplayPending
@@ -53,7 +57,7 @@ provides:
       description: "Scaffold per-instance state directory (state.sqlite + dashboard.md + context/ + retros/)"
     - name: errands
       command: bun skill/scripts/errands.ts
-      description: "work_items CLI — list / enqueue / claim / resolve / pending"
+      description: "work_items CLI — list / enqueue / claim / resolve / pending / get / annotate"
     - name: events
       command: bun skill/scripts/events.ts
       description: "events CLI — append / tail / since (append-only timeline)"

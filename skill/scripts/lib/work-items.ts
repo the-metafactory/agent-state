@@ -201,6 +201,91 @@ export function resolveWorkItem(
   return { row: updated, event };
 }
 
+export type AnnotateResult = { row: WorkItem; event: EventRow };
+
+/**
+ * Merge a host-supplied JSON object into a work_item's `notes` column and emit a
+ * `work_item_annotated` event. This is the KV-ish upsert surface hosts use to hang
+ * metadata (e.g. a `session_id`) off an existing work item — the errand→session map
+ * behind cortex#1720 S4b. It is deliberately metadata-only:
+ *
+ *   - It NEVER changes `status`, `kind`, `payload`, or `owner_agent`. Those are
+ *     bundle-owned; annotate touches `notes` + `updated_at` only.
+ *   - It is allowed on ANY status, terminal rows included. Unlike claim/resolve, an
+ *     annotation is not a state transition — recording a session id against a `done`
+ *     row is legitimate, so there is no terminal-status guard here.
+ *
+ * notes-as-JSON-object contract for this path:
+ *   - `patch` MUST be a plain JSON object. Arrays / scalars are rejected by the caller.
+ *   - Base object is derived from the existing `notes` cell:
+ *       · null / empty string        → base = {}
+ *       · valid JSON object          → base = that object
+ *       · anything else (non-JSON text, or JSON array/string/number) →
+ *         base = { text: <original raw string> }, preserving the operator's freeform
+ *         notes under a reserved `text` key rather than clobbering them.
+ *   - The merge is a SHALLOW override: keys in `patch` win over the base. Nested
+ *     objects are replaced wholesale, not deep-merged (keep the contract predictable).
+ *
+ * Audit trail: emits its own `work_item_annotated` event (payload `{ keys }` — the
+ * top-level keys written by this call). Per the events-are-lib-owned rule in this
+ * file's header, CLI/programmatic callers MUST NOT also appendEvent for this.
+ */
+export function annotateWorkItem(
+  db: Database,
+  id: string,
+  patch: Record<string, unknown>,
+): AnnotateResult {
+  const row = getWorkItem(db, id);
+  if (!row) {
+    throw new Error(`annotateWorkItem: no such work_item id=${id}`);
+  }
+  const base = notesToObject(row.notes);
+  const merged = { ...base, ...patch };
+  const ts = nowMs();
+  db.query(
+    `UPDATE work_items
+       SET notes = ?,
+           updated_at = ?
+     WHERE id = ?`,
+  ).run(JSON.stringify(merged), ts, id);
+  const updated = getWorkItem(db, id);
+  if (!updated) {
+    throw new Error(`annotateWorkItem: row vanished post-update (id=${id})`);
+  }
+  const event = appendEvent(db, {
+    type: "work_item_annotated",
+    actor: updated.owner_agent,
+    work_item_id: id,
+    payload: { keys: Object.keys(patch) },
+    ts,
+  });
+  return { row: updated, event };
+}
+
+/**
+ * Coerce a `notes` cell into a base object for annotate-merge.
+ *   - null / empty          → {}
+ *   - JSON object           → the object
+ *   - non-JSON, or JSON      → { text: <raw string> } (preserve freeform notes)
+ *     array/scalar
+ */
+function notesToObject(notes: string | null): Record<string, unknown> {
+  if (notes === null || notes.length === 0) return {};
+  try {
+    const parsed: unknown = JSON.parse(notes);
+    if (
+      parsed !== null &&
+      typeof parsed === "object" &&
+      !Array.isArray(parsed)
+    ) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    // fall through — non-JSON text
+  }
+  return { text: notes };
+}
+
 export function getWorkItem(db: Database, id: string): WorkItem | null {
   return (
     db

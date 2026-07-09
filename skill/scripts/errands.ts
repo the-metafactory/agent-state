@@ -8,6 +8,8 @@
  *   claim     --id <ID> --owner <agent>
  *   resolve   --id <ID> --status done|failed|cancelled [--notes <text>]
  *   pending   [--kind <K>]
+ *   get       --id <ID>                    read one work_item as JSON (exit 1 if not found)
+ *   annotate  --id <ID> --notes-json <OBJ> merge a JSON object into the row's notes (metadata-only)
  *
  * Event emission lives in `lib/work-items.ts`, NOT here. The lib functions emit
  * `work_item_created` / `work_item_claimed` / `work_item_resolved` themselves so
@@ -26,6 +28,8 @@ import {
   resolveWorkItem,
   listWorkItems,
   listPending,
+  getWorkItem,
+  annotateWorkItem,
   type WorkItemStatus,
   type ResolveStatus,
 } from "./lib/work-items";
@@ -46,7 +50,7 @@ function printRow(row: unknown): void {
 
 function usage(): never {
   process.stderr.write(
-    "usage: errands.ts <list|enqueue|claim|resolve|pending> [...flags]\n",
+    "usage: errands.ts <list|enqueue|claim|resolve|pending|get|annotate> [...flags]\n",
   );
   process.exit(2);
 }
@@ -143,6 +147,40 @@ async function main(): Promise<void> {
       const kind = optionalString(rest, "kind");
       const rows = listPending(db, kind);
       for (const r of rows) printRow(r);
+      return;
+    }
+    case "get": {
+      const id = requireString(rest, "id");
+      const row = getWorkItem(db, id);
+      if (!row) {
+        process.stderr.write(`errands.ts get: no such work_item id=${id}\n`);
+        process.exit(1);
+      }
+      printRow(row);
+      return;
+    }
+    case "annotate": {
+      const id = requireString(rest, "id");
+      const notesJson = requireString(rest, "notes-json");
+      // Parse + shape-check here for a clearer error than the lib/SQL layer.
+      let patch: unknown;
+      try {
+        patch = JSON.parse(notesJson);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        process.stderr.write(`invalid --notes-json (must be JSON): ${msg}\n`);
+        process.exit(2);
+      }
+      if (patch === null || typeof patch !== "object" || Array.isArray(patch)) {
+        process.stderr.write(
+          `invalid --notes-json: must be a JSON object (not an array or scalar)\n`,
+        );
+        process.exit(2);
+      }
+      // Lib merges into notes, bumps updated_at, and emits work_item_annotated itself —
+      // do NOT appendEvent here. Status/kind/payload are untouched by design.
+      const result = annotateWorkItem(db, id, patch as Record<string, unknown>);
+      printRow(result.row);
       return;
     }
     default:

@@ -9,6 +9,7 @@ import {
   claimWorkItem,
   resolveWorkItem,
   getWorkItem,
+  annotateWorkItem,
   listWorkItems,
   listPending,
   pendingForReplay,
@@ -327,5 +328,106 @@ describe("pendingForReplay", () => {
     });
     const rows = pendingForReplay(ctx.db, 1_000);
     expect(rows).toHaveLength(0);
+  });
+});
+
+describe("annotateWorkItem (KV upsert surface — #12)", () => {
+  let ctx: ReturnType<typeof freshDb>;
+  beforeEach(() => {
+    ctx = freshDb();
+  });
+  afterEach(() => {
+    ctx.db.close();
+    rmTmp(ctx.dir);
+  });
+
+  test("merges patch into empty notes and stores a JSON object", () => {
+    enqueueWorkItem(ctx.db, { id: "w1", kind: "dev-session", payload: {} });
+    const r = annotateWorkItem(ctx.db, "w1", { session_id: "ccs-123" });
+    expect(JSON.parse(r.row.notes!)).toEqual({ session_id: "ccs-123" });
+  });
+
+  test("merges over an existing JSON-object notes (incoming keys win)", () => {
+    enqueueWorkItem(ctx.db, {
+      id: "w1",
+      kind: "dev-session",
+      payload: {},
+      notes: JSON.stringify({ session_id: "old", host: "grove" }),
+    });
+    const r = annotateWorkItem(ctx.db, "w1", { session_id: "new" });
+    expect(JSON.parse(r.row.notes!)).toEqual({ session_id: "new", host: "grove" });
+  });
+
+  test("preserves non-JSON freeform notes under a `text` key when merging", () => {
+    enqueueWorkItem(ctx.db, {
+      id: "w1",
+      kind: "k",
+      payload: {},
+      notes: "shipped by hand",
+    });
+    const r = annotateWorkItem(ctx.db, "w1", { session_id: "ccs-9" });
+    expect(JSON.parse(r.row.notes!)).toEqual({
+      text: "shipped by hand",
+      session_id: "ccs-9",
+    });
+  });
+
+  test("preserves a JSON array/scalar notes under `text` (non-object JSON)", () => {
+    enqueueWorkItem(ctx.db, {
+      id: "w1",
+      kind: "k",
+      payload: {},
+      notes: JSON.stringify([1, 2, 3]),
+    });
+    const r = annotateWorkItem(ctx.db, "w1", { a: 1 });
+    expect(JSON.parse(r.row.notes!)).toEqual({ text: "[1,2,3]", a: 1 });
+  });
+
+  test("emits a work_item_annotated event with the written keys (W2)", () => {
+    enqueueWorkItem(ctx.db, { id: "w1", kind: "k", payload: {}, owner_agent: "luna" });
+    const r = annotateWorkItem(ctx.db, "w1", { session_id: "ccs-1", extra: true });
+    expect(r.event.type).toBe("work_item_annotated");
+    expect(r.event.work_item_id).toBe("w1");
+    expect(r.event.actor).toBe("luna");
+    expect(JSON.parse(r.event.payload)).toEqual({ keys: ["session_id", "extra"] });
+    const linked = eventsForWorkItem(ctx.db, "w1");
+    expect(linked.map((e) => e.type)).toEqual([
+      "work_item_created",
+      "work_item_annotated",
+    ]);
+  });
+
+  test("is allowed on a terminal row and never changes status (metadata-only)", () => {
+    enqueueWorkItem(ctx.db, { id: "w1", kind: "k", payload: {} });
+    resolveWorkItem(ctx.db, "w1", "done");
+    const r = annotateWorkItem(ctx.db, "w1", { session_id: "ccs-2" });
+    expect(r.row.status).toBe("done");
+    expect(JSON.parse(r.row.notes!).session_id).toBe("ccs-2");
+  });
+
+  test("does not touch kind / payload / owner_agent", () => {
+    enqueueWorkItem(ctx.db, {
+      id: "w1",
+      kind: "dev-session",
+      payload: { hot: "read" },
+      owner_agent: "luna",
+    });
+    const r = annotateWorkItem(ctx.db, "w1", { session_id: "ccs-3" });
+    expect(r.row.kind).toBe("dev-session");
+    expect(r.row.payload).toBe(JSON.stringify({ hot: "read" }));
+    expect(r.row.owner_agent).toBe("luna");
+  });
+
+  test("bumps updated_at", async () => {
+    const e = enqueueWorkItem(ctx.db, { id: "w1", kind: "k", payload: {} });
+    await new Promise((resolve) => setTimeout(resolve, 2));
+    const r = annotateWorkItem(ctx.db, "w1", { session_id: "ccs-4" });
+    expect(r.row.updated_at).toBeGreaterThan(e.row.updated_at);
+  });
+
+  test("throws on unknown id", () => {
+    expect(() => annotateWorkItem(ctx.db, "nope", { a: 1 })).toThrow(
+      /no such work_item/,
+    );
   });
 });

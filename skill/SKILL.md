@@ -32,6 +32,8 @@ Each workflow ships as `Workflows/<Name>.md` with a runnable script in `scripts/
 - `EnqueueWorkItem` — insert pending row into `work_items`.
 - `ClaimWorkItem` — atomic `pending → in_flight` transition (emits `work_item_claimed`).
 - `ResolveWorkItem` — terminal transition (`done` or `failed`), append matching event.
+- `GetWorkItem` — read one work item by id as JSON (exit 1 if not found).
+- `AnnotateWorkItem` — merge host metadata (e.g. `session_id`) into a row's `notes`; emits `work_item_annotated`.
 - `AppendEvent` — append-only insert into `events`.
 - `ReplayPending` — `onStart` hook; walks unfinished work items and re-emits.
 - `RegenerateDashboard` — rebuild `dashboard.md` from current state.
