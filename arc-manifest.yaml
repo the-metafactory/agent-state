@@ -1,7 +1,7 @@
 # arc-manifest.yaml — arc package manifest
 # See: https://github.com/the-metafactory/arc
 
-schema: pai/v1
+schema: arc/v1
 type: skill
 namespace: metafactory
 name: agent-state
