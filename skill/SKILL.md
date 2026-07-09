@@ -5,7 +5,7 @@ description: |
   Hosts call these workflows at lifecycle moments to scaffold instance state, enqueue and
   resolve work items, append events, replay in-flight work after restart, regenerate the
   dashboard, and produce retrospective summaries.
-version: 0.2.1
+version: 0.3.0
 ---
 
 # AgentState
