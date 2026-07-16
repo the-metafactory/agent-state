@@ -3,10 +3,12 @@
 
 schema: arc/v1
 type: skill
-namespace: metafactory
+namespace: "@metafactory"
 name: agent-state
 version: 0.3.0
+tier: custom
 description: "Agent state primitive — work_items, events, dashboard, retros for persona-driven agents."
+license: MIT
 
 author:
   name: Andreas Aastroem
@@ -69,7 +71,15 @@ provides:
       description: "Generate weekly ISO-week retro from events"
 
 capabilities:
+  # Per-instance state.sqlite, dashboard.md, and retros/ live under $MF_INSTANCE_DIR.
   filesystem:
-    - path: $MF_INSTANCE_DIR
-      access: read-write
-      reason: "Per-instance state.sqlite, dashboard.md, retros/ live here"
+    read:
+      - "$MF_INSTANCE_DIR/**"
+    write:
+      - "$MF_INSTANCE_DIR/**"
+  network: []
+  # The scripts do their SQLite/dashboard work in-process (bun:sqlite) — no
+  # subprocess spawning.
+  bash:
+    allowed: false
+  secrets: []
